@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aura — Google-Style Personal AI Assistant</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #0b0f19; }
+    .google-gradient-text {
+      background: linear-gradient(90deg, #4285F4, #9b72cb, #d96570, #FBBC05);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .voice-orb {
+      background: conic-gradient(from 0deg, #4285F4, #34A853, #FBBC05, #EA4335, #4285F4);
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+    .voice-orb.listening {
+      animation: spin-orb 2.4s linear infinite, pulse-orb 1.5s ease-in-out infinite;
+      box-shadow: 0 0 36px rgba(66, 133, 244, 0.55), 0 0 64px rgba(234, 67, 53, 0.25);
+    }
+    .voice-orb.speaking {
+      animation: pulse-orb 1.1s ease-in-out infinite;
+      box-shadow: 0 0 32px rgba(52, 168, 83, 0.5);
+    }
+    @keyframes spin-orb {
+      to { filter: hue-rotate(360deg); }
+    }
+    @keyframes pulse-orb {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    .chat-scroll::-webkit-scrollbar { width: 6px; }
+    .chat-scroll::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+  </style>
+</head>
+<body class="text-slate-100 h-screen flex flex-col overflow-hidden antialiased">
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-sm"></div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-md rounded-3xl bg-[#131826] border border-slate-700/80 p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <span id="confirm-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30">Confirm Action</span>
+        <button id="confirm-close-btn" type="button" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+      <h3 id="confirm-title" class="text-base font-semibold text-white">Review Action</h3>
+      <div id="confirm-details" class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-4 text-xs text-slate-300 whitespace-pre-line"></div>
+      <p class="text-xs text-blue-300">Just say <strong>"Yes"</strong> to confirm or <strong>"Cancel"</strong> to abort.</p>
+      <div class="flex justify-end gap-2.5">
+        <button id="confirm-cancel-btn" type="button" class="px-4 py-2 rounded-full bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition">Cancel</button>
+        <button id="confirm-exec-btn" type="button" class="px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Bar -->
+  <header class="h-16 px-4 sm:px-6 border-b border-slate-800/80 bg-[#0b0f19]/95 flex items-center justify-between shrink-0">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-full voice-orb flex items-center justify-center p-[2px]">
+        <div class="w-full h-full rounded-full bg-[#0b0f19] flex items-center justify-center">
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
+        </div>
+      </div>
+      <div>
+        <span class="text-base font-semibold google-gradient-text">Aura Assistant</span>
+        <span id="status-pill" class="ml-2 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Ready</span>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button id="tts-toggle" type="button" class="px-3 py-1.5 rounded-full text-xs font-medium bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-300 transition">
+        Voice: <span id="tts-label" class="text-emerald-400">On</span>
+      </button>
+      <button id="drawer-toggle" type="button" class="px-3.5 py-1.5 rounded-full text-xs font-medium bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-200 transition">
+        Workspace (<span id="workspace-count">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Layout -->
+  <div class="flex-1 flex overflow-hidden relative">
+    <!-- Chat Conversation Area -->
+    <main class="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4 sm:px-6 overflow-hidden">
+      <!-- Active Call Pill -->
+      <div id="active-call-banner" class="hidden mt-3 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 px-4 py-2.5 flex items-center justify-between">
+        <div class="text-xs">
+          <span class="font-semibold text-white">Calling <span id="call-banner-name">—</span></span>
+          <span class="text-emerald-300 ml-2"><span id="call-banner-phone">—</span> &bull; <span id="call-timer">00:00</span></span>
+        </div>
+        <button id="end-call-btn" type="button" class="px-3 py-1 rounded-full bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white">End</button>
+      </div>
+
+      <!-- Chat Stream -->
+      <div id="chat-stream" class="flex-1 overflow-y-auto chat-scroll py-6 space-y-5">
+        <div class="flex flex-col items-center text-center py-6 space-y-3" id="welcome-hero">
+          <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-white">
+            Hi, I'm <span class="google-gradient-text">Aura</span>
+          </h2>
+          <p class="text-sm text-slate-400 max-w-md">
+            Tap the mic once to start a natural two-way conversation. Ask me anything—like <em>"What is India?"</em>—or tell me to draft emails, place calls, schedule meetings, and add tasks.
+          </p>
+          <div class="flex flex-wrap justify-center gap-2 pt-2">
+            <button type="button" class="quick-cmd px-3.5 py-2 rounded-full text-xs bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-300 transition" data-cmd="What is India?">What is India?</button>
+            <button type="button" class="quick-cmd px-3.5 py-2 rounded-full text-xs bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-300 transition" data-cmd="Draft an email to Priya about the FastAPI deployment">Draft email to Priya</button>
+            <button type="button" class="quick-cmd px-3.5 py-2 rounded-full text-xs bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-300 transition" data-cmd="Call Rahul">Call Rahul</button>
+            <button type="button" class="quick-cmd px-3.5 py-2 rounded-full text-xs bg-[#131826] border border-slate-800 hover:border-blue-500/50 text-slate-300 transition" data-cmd="Schedule a meeting with Ananya tomorrow at 4 pm">Schedule meeting</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Voice & Input Dock -->
+      <footer class="pb-5 pt-2 shrink-0 space-y-3">
+        <!-- Live Non-Disappearing Transcript Pill -->
+        <div id="live-caption" class="hidden mx-auto max-w-xl rounded-2xl bg-[#131826] border border-blue-500/40 px-4 py-2.5 text-center shadow-lg">
+          <span class="text-[11px] uppercase tracking-wider text-blue-400 font-semibold block mb-0.5">Listening — Speak Naturally</span>
+          <p id="live-caption-text" class="text-sm text-white min-h-[20px]">Waiting for your voice...</p>
+        </div>
+
+        <div class="flex items-center gap-3 bg-[#131826] border border-slate-800 rounded-full p-2 pl-4 shadow-2xl">
+          <input id="command-input" type="text" placeholder="Ask anything or give a command..." class="flex-1 bg-transparent text-sm text-white placeholder-slate-500 outline-none" />
+          <button id="send-btn" type="button" class="px-4 py-2 rounded-full bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition">Send</button>
+          <button id="mic-orb-btn" type="button" title="Start / Stop Two-Way Voice" class="w-12 h-12 rounded-full voice-orb p-[2.5px] shrink-0 cursor-pointer">
+            <div class="w-full h-full rounded-full bg-[#0b0f19] flex items-center justify-center">
+              <svg id="mic-icon" class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            </div>
+          </button>
+        </div>
+        <p id="voice-hint" class="text-center text-[11px] text-slate-500">Tap the glowing orb once to start hands-free conversation. Tap again to stop.</p>
+      </footer>
+    </main>
+
+    <!-- Collapsible Workspace Drawer -->
+    <aside id="workspace-drawer" class="hidden w-full sm:w-96 border-l border-slate-800 bg-[#101522] flex flex-col shrink-0 z-40 absolute sm:relative inset-y-0 right-0">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-white">Workspace Activity</h3>
+        <button id="drawer-close" type="button" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+      <div class="flex gap-1.5 p-3 border-b border-slate-800 text-xs">
+        <button type="button" class="wtab px-3 py-1.5 rounded-full bg-blue-600 text-white font-medium" data-wtab="emails">Emails</button>
+        <button type="button" class="wtab px-3 py-1.5 rounded-full bg-slate-800 text-slate-300" data-wtab="calls">Calls</button>
+        <button type="button" class="wtab px-3 py-1.5 rounded-full bg-slate-800 text-slate-300" data-wtab="events">Calendar</button>
+        <button type="button" class="wtab px-3 py-1.5 rounded-full bg-slate-800 text-slate-300" data-wtab="tasks">Tasks</button>
+      </div>
+      <div id="drawer-content" class="flex-1 overflow-y-auto chat-scroll p-4 space-y-3 text-xs"></div>
+    </aside>
+  </div>
+
+  <script>
+    const API_BASE = '/api/v1';
+    let ttsEnabled = true;
+    let voiceSessionActive = false;
+    let isSpeaking = false;
+    let isListening = false;
+    let recognition = null;
+    let pendingTranscript = null;
+    let activeWTab = 'emails';
+    let callTimerInterval = null;
+    let callSeconds = 0;
+    let appState = { contacts: [], emails: [], calls: [], events: [], tasks: [], logs: [] };
+
+    function showToast(msg) {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = 'px-4 py-2.5 rounded-2xl bg-[#131826] border border-blue-500/40 text-xs text-slate-100 shadow-xl';
+      el.textContent = msg;
+      c.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+
+    function appendMessage(role, text, badge = '') {
+      const hero = document.getElementById('welcome-hero');
+      if (hero) hero.classList.add('hidden');
+      const stream = document.getElementById('chat-stream');
+      const wrap = document.createElement('div');
+      if (role === 'user') {
+        wrap.className = 'flex justify-end';
+        wrap.innerHTML = `<div class="max-w-[82%] rounded-3xl rounded-br-md bg-blue-600 text-white px-4 py-2.5 text-sm shadow-md">${escapeHtml(text)}</div>`;
+      } else {
+        wrap.className = 'flex justify-start';
+        wrap.innerHTML = `
+          <div class="max-w-[88%] rounded-3xl rounded-bl-md bg-[#131826] border border-slate-800 px-4 py-3 text-sm text-slate-100 shadow-md space-y-1.5">
+            ${badge ? `<span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/15 text-blue-300">${escapeHtml(badge)}</span>` : ''}
+            <p class="leading-relaxed">${escapeHtml(text)}</p>
+          </div>`;
+      }
+      stream.appendChild(wrap);
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, s => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
+    }
+
+    function setOrbState(mode) {
+      const orb = document.getElementById('mic-orb-btn');
+      const pill = document.getElementById('status-pill');
+      orb.classList.remove('listening', 'speaking');
+      if (mode === 'listening') {
+        orb.classList.add('listening');
+        pill.textContent = 'Listening...';
+        pill.className = 'ml-2 px-2 py-0.5 rounded-full text-[11px] bg-blue-500/20 text-blue-300 border border-blue-500/40';
+      } else if (mode === 'speaking') {
+        orb.classList.add('speaking');
+        pill.textContent = 'Speaking...';
+        pill.className = 'ml-2 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+      } else {
+        pill.textContent = 'Ready';
+        pill.className = 'ml-2 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+      }
+    }
+
+    function pickBestVoice() {
+      const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      return voices.find(v => /en/i.test(v.lang) && /natural|google|samantha|aria/i.test(v.name))
+        || voices.find(v => /en/i.test(v.lang))
+        || null;
+    }
+
+    async function speakText(text) {
+      if (!ttsEnabled || !text) {
+        if (voiceSessionActive) startListening();
+        return;
+      }
+      isSpeaking = true;
+      stopListening();
+      setOrbState('speaking');
+
+      // 1. Try Gemini TTS from FastAPI
+      try {
+        const res = await fetch(`${API_BASE}/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.audio_base64) {
+            const audio = new Audio(`data:${data.mime_type || 'audio/wav'};base64,${data.audio_base64}`);
+            audio.onended = () => {
+              isSpeaking = false;
+              setOrbState(voiceSessionActive ? 'listening' : 'idle');
+              if (voiceSessionActive) startListening();
+            };
+            await audio.play();
+            return;
+          }
+        }
+      } catch (_) {}
+
+      // 2. Fallback to browser SpeechSynthesis
+      if (!('speechSynthesis' in window)) {
+        isSpeaking = false;
+        if (voiceSessionActive) startListening();
+        return;
+      }
+      try {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        const v = pickBestVoice();
+        if (v) utter.voice = v;
+        utter.rate = 1.02;
+        utter.onend = () => {
+          isSpeaking = false;
+          setOrbState(voiceSessionActive ? 'listening' : 'idle');
+          if (voiceSessionActive) startListening();
+        };
+        utter.onerror = () => {
+          isSpeaking = false;
+          if (voiceSessionActive) startListening();
+        };
+        window.speechSynthesis.speak(utter);
+      } catch (_) {
+        isSpeaking = false;
+      }
+    }
+
+    function startListening() {
+      if (!recognition || isListening || isSpeaking) return;
+      try {
+        document.getElementById('live-caption').classList.remove('hidden');
+        document.getElementById('live-caption-text').textContent = 'Listening... speak now';
+        recognition.start();
+        isListening = true;
+        setOrbState('listening');
+      } catch (_) {}
+    }
+
+    function stopListening() {
+      if (recognition && isListening) {
+        try { recognition.stop(); } catch (_) {}
+      }
+      isListening = false;
+      document.getElementById('live-caption').classList.add('hidden');
+    }
+
+    function openConfirmModal(data) {
+      pendingTranscript = data.data.transcript;
+      const isCall = data.action_taken === 'preview_call';
+      document.getElementById('confirm-badge').textContent = isCall ? 'Confirm Call' : 'Confirm Send Email';
+      document.getElementById('confirm-title').textContent = isCall
+        ? `Call ${data.data.contact_name}?`
+        : `Send email to ${data.data.to_name}?`;
+      document.getElementById('confirm-details').textContent = isCall
+        ? `Contact: ${data.data.contact_name}\nPhone: ${data.data.phone_number}`
+        : `To: ${data.data.to_name} <${data.data.to_email}>\nSubject: ${data.data.subject}\n\n${data.data.body}`;
+      document.getElementById('confirm-modal').classList.remove('hidden');
+    }
+
+    function closeConfirmModal() {
+      pendingTranscript = null;
+      document.getElementById('confirm-modal').classList.add('hidden');
+    }
+
+    document.getElementById('confirm-cancel-btn').addEventListener('click', () => {
+      closeConfirmModal();
+      const msg = 'Okay, I cancelled that. What would you like to do next?';
+      appendMessage('assistant', msg, 'cancelled');
+      speakText(msg);
+    });
+    document.getElementById('confirm-close-btn').addEventListener('click', closeConfirmModal);
+    document.getElementById('confirm-exec-btn').addEventListener('click', () => {
+      if (!pendingTranscript) return;
+      const t = pendingTranscript;
+      closeConfirmModal();
+      sendCommand(t, true);
+    });
+
+    async function sendCommand(transcript, confirmExecution = false, echoUser = false) {
+      const clean = transcript.trim();
+      if (!clean) return;
+      if (echoUser) appendMessage('user', clean);
+
+      if (pendingTranscript && !confirmExecution) {
+        if (/^(yes|yeah|yep|confirm|send it|do it|go ahead|ok|okay)\b/i.test(clean)) {
+          const t = pendingTranscript;
+          closeConfirmModal();
+          return sendCommand(t, true, false);
+        }
+        if (/^(no|nope|cancel|stop|abort|don't)\b/i.test(clean)) {
+          closeConfirmModal();
+          const msg = 'Okay, I cancelled that. What else can I help you with?';
+          appendMessage('assistant', msg, 'cancelled');
+          speakText(msg);
+          return;
+        }
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: clean, confirm_execution: confirmExecution })
+        });
+        const data = await res.json();
+        const spoken = data.speech_text || data.reply;
+        appendMessage('assistant', spoken, data.intent);
+
+        if (data.requires_confirmation) {
+          openConfirmModal(data);
+        } else if (data.action_taken === 'call_placed' && data.data.call) {
+          startCallTimer(data.data.call.contact_name, data.data.call.phone_number);
+        }
+        await fetchState();
+        await speakText(spoken);
+      } catch (err) {
+        showToast('Could not reach FastAPI server.');
+      }
+    }
+
+    function startCallTimer(name, phone) {
+      clearInterval(callTimerInterval);
+      callSeconds = 0;
+      document.getElementById('call-banner-name').textContent = name;
+      document.getElementById('call-banner-phone').textContent = phone;
+      document.getElementById('call-timer').textContent = '00:00';
+      document.getElementById('active-call-banner').classList.remove('hidden');
+      callTimerInterval = setInterval(() => {
+        callSeconds += 1;
+        const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
+        const s = String(callSeconds % 60).padStart(2, '0');
+        document.getElementById('call-timer').textContent = `${m}:${s}`;
+      }, 1000);
+    }
+
+    document.getElementById('end-call-btn').addEventListener('click', () => {
+      clearInterval(callTimerInterval);
+      document.getElementById('active-call-banner').classList.add('hidden');
+      speakText('Call ended. Is there anything else you want me to do?');
+    });
+
+    async function fetchState() {
+      try {
+        const res = await fetch(`${API_BASE}/state`);
+        if (!res.ok) return;
+        appState = await res.json();
+        const total = appState.emails.length + appState.calls.length + appState.events.length + appState.tasks.filter(t => !t.completed).length;
+        document.getElementById('workspace-count').textContent = total;
+        renderDrawer();
+      } catch (_) {}
+    }
+
+    function renderDrawer() {
+      const box = document.getElementById('drawer-content');
+      if (activeWTab === 'emails') {
+        box.innerHTML = appState.emails.map(e => `
+          <div class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-3 space-y-1.5">
+            <div class="flex justify-between gap-2">
+              <span class="font-semibold text-white">${escapeHtml(e.subject)}</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] ${e.status === 'sent' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}">${e.status}</span>
+            </div>
+            <p class="text-slate-400">To: ${escapeHtml(e.to_email)}</p>
+            <p class="text-slate-300 whitespace-pre-line">${escapeHtml(e.body)}</p>
+          </div>`).join('') || '<p class="text-slate-500">No emails yet.</p>';
+      } else if (activeWTab === 'calls') {
+        box.innerHTML = appState.calls.map(c => `
+          <div class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-3 flex justify-between items-center">
+            <div><p class="font-semibold text-white">${escapeHtml(c.contact_name)}</p><p class="text-slate-400">${escapeHtml(c.phone_number)}</p></div>
+            <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">${c.status}</span>
+          </div>`).join('') || '<p class="text-slate-500">No calls yet.</p>';
+      } else if (activeWTab === 'events') {
+        box.innerHTML = appState.events.map(ev => `
+          <div class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-3">
+            <p class="font-semibold text-white">${escapeHtml(ev.title)}</p>
+            <p class="text-slate-400">${ev.date} at ${ev.time}</p>
+          </div>`).join('') || '<p class="text-slate-500">No events yet.</p>';
+      } else {
+        box.innerHTML = appState.tasks.map(t => `
+          <div class="rounded-2xl bg-[#0b0f19] border border-slate-800 p-3 flex justify-between items-center">
+            <span class="${t.completed ? 'line-through text-slate-500' : 'text-white'}">${escapeHtml(t.title)}</span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">${t.priority}</span>
+          </div>`).join('') || '<p class="text-slate-500">No tasks yet.</p>';
+      }
+    }
+
+    // Drawer & Tabs
+    document.getElementById('drawer-toggle').addEventListener('click', () => {
+      document.getElementById('workspace-drawer').classList.toggle('hidden');
+    });
+    document.getElementById('drawer-close').addEventListener('click', () => {
+      document.getElementById('workspace-drawer').classList.add('hidden');
+    });
+    document.querySelectorAll('.wtab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeWTab = btn.dataset.wtab;
+        document.querySelectorAll('.wtab').forEach(b => b.className = 'wtab px-3 py-1.5 rounded-full bg-slate-800 text-slate-300');
+        btn.className = 'wtab px-3 py-1.5 rounded-full bg-blue-600 text-white font-medium';
+        renderDrawer();
+      });
+    });
+
+    // Text & Quick Commands
+    document.getElementById('send-btn').addEventListener('click', () => {
+      const inp = document.getElementById('command-input');
+      if (inp.value.trim()) {
+        const v = inp.value;
+        inp.value = '';
+        sendCommand(v, false, true);
+      }
+    });
+    document.getElementById('command-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('send-btn').click();
+      }
+    });
+    document.querySelectorAll('.quick-cmd').forEach(btn => {
+      btn.addEventListener('click', () => sendCommand(btn.dataset.cmd, false, true));
+    });
+
+    document.getElementById('tts-toggle').addEventListener('click', () => {
+      ttsEnabled = !ttsEnabled;
+      const lbl = document.getElementById('tts-label');
+      lbl.textContent = ttsEnabled ? 'On' : 'Off';
+      lbl.className = ttsEnabled ? 'text-emerald-400' : 'text-slate-500';
+      if (!ttsEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    });
+
+    // Continuous Two-Way Voice Session
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onresult = (event) => {
+        let interim = '';
+        let finalText = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        const caption = document.getElementById('live-caption-text');
+        caption.textContent = (finalText || interim || 'Listening...').trim();
+
+        if (finalText.trim()) {
+          stopListening();
+          sendCommand(finalText.trim(), false, true);
+        }
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        if (voiceSessionActive && !isSpeaking) {
+          setTimeout(startListening, 250);
+        } else if (!isSpeaking) {
+          setOrbState('idle');
+          document.getElementById('live-caption').classList.add('hidden');
+        }
+      };
+    }
+
+    document.getElementById('mic-orb-btn').addEventListener('click', () => {
+      if (!recognition) {
+        showToast('SpeechRecognition requires Chrome or Edge.');
+        return;
+      }
+      voiceSessionActive = !voiceSessionActive;
+      if (voiceSessionActive) {
+        document.getElementById('voice-hint').textContent = 'Two-way voice active. Speak freely—tap the orb to stop.';
+        startListening();
+      } else {
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        isSpeaking = false;
+        stopListening();
+        setOrbState('idle');
+        document.getElementById('voice-hint').textContent = 'Tap the glowing orb once to start hands-free conversation.';
+      }
+    });
+
+    if ('speechSynthesis' in window) window.speechSynthesis.onvoiceschanged = () => pickBestVoice();
+    fetchState();
+  </script>
+</body>
+</html>

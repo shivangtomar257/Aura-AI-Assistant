@@ -1,0 +1,21 @@
+# Environment & Secrets (NEVER commit .env or OAuth tokens)
+.env
+.env.local
+data/
+*.token.json
+google_token.json
+
+# Python Virtual Environments & Cache
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
